@@ -1,0 +1,13 @@
+{
+  "name": "raghav-plugins",
+  "owner": { "name": "Raghav", "email": "raghavsatyadev@gmail.com" },
+  "metadata": { "description": "Raghav's personal Claude Code plugins" },
+  "plugins": [
+    {
+      "name": "plan-keeper",
+      "source": "./plugins/plan-keeper",
+      "description": "Low-token persistent plan/progress file: plans before work, saves progress before stopping, prunes done items.",
+      "version": "1.6.1"
+    }
+  ]
+}

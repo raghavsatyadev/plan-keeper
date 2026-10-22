@@ -1,0 +1,29 @@
+{
+  "description": "plan-keeper hooks (bash: macOS, Linux, Windows with Git Bash). For Windows without Git Bash, use hooks.powershell.json instead - see README.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-hook.sh\" session-start", "timeout": 10 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-hook.sh\" prompt", "timeout": 10 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-hook.sh\" stop", "timeout": 10 },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-hook.sh\" stop-llm", "async": true },
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/plan-hook.sh\" stop-agy", "async": true, "timeout": 150 }
+        ]
+      }
+    ]
+  }
+}
