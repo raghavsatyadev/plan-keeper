@@ -66,7 +66,7 @@ Without agy, projects without a `.claude/PLAN.md` never get forced updates. With
 In Claude Code:
 
 ```
-/plugin marketplace add C:\Raghav\Work\CurrentProjects\plan-keeper
+/plugin marketplace add <path-to-plan-keeper>
 /plugin install plan-keeper@raghav-plugins
 ```
 
