@@ -1,6 +1,6 @@
 {
   "name": "plan-keeper",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Keeps a short .claude/PLAN.md per project: plan before work, save progress before stopping, delete finished items, merge related ones. Built to cost as few tokens as possible.",
   "author": { "name": "Raghav", "email": "raghavsatyadev@gmail.com" },
   "keywords": ["plan", "progress", "handoff", "context", "hooks"]

@@ -27,6 +27,12 @@ if ([Console]::IsInputRedirected) {
   if ($raw) { try { $j = $raw | ConvertFrom-Json } catch { $j = $null } }
 }
 
+# Git work is checked in the session's own folder (the hook's "cwd"), which may be a worktree of $root.
+# The plan files stay in $root\.claude, shared by every worktree.
+$wt = $root
+if ($j -and $j.cwd) { $top = & git -C $j.cwd rev-parse --show-toplevel 2>$null; if ($LASTEXITCODE -eq 0 -and $top) { $wt = $top } }
+$inWorktree = (($wt -replace '\\', '/').TrimEnd('/') -ne ($root -replace '\\', '/').TrimEnd('/'))
+
 function Get-Asks([string]$msg) {
   if (-not $msg) { return @() }
   $marked = New-Object System.Collections.Generic.List[string]
@@ -62,7 +68,7 @@ function Add-History([string]$text) {
 function Get-TurnCommits {
   if (-not (Test-Path -LiteralPath $tstate) -or -not (In-Git)) { return '' }
   $since = (Get-Item -LiteralPath $tstate).LastWriteTime.ToString('yyyy-MM-ddTHH:mm:ss')
-  (@(& git -C $root log --since=$since --format=%s 2>$null) | Select-Object -First 5) -join '; '
+  (@(& git -C $wt log --since=$since --format=%s 2>$null) | Select-Object -First 5) -join '; '
 }
 
 # Log lines of a plan's text.
@@ -83,10 +89,11 @@ function Save-DroppedLog([string]$old, [string]$new) {
   [IO.File]::AppendAllText($hist, (($gone -join "`n") + "`n"), $utf8)
 }
 
-function In-Git { & git -C $root rev-parse --is-inside-work-tree 2>$null | Out-Null; $LASTEXITCODE -eq 0 }
+function In-Git { & git -C $wt rev-parse --is-inside-work-tree 2>$null | Out-Null; $LASTEXITCODE -eq 0 }
 # Hash of uncommitted changes outside .claude/. One git call per prompt and per stop, none per edit.
 function Get-Fingerprint {
-  $t = (@(& git -C $root status --porcelain -- . ':!.claude' 2>$null) + @(& git -C $root diff -- . ':!.claude' 2>$null)) -join "`n"
+  # HEAD is included, so a turn that only commits (clean tree before and after) still counts as work.
+  $t = (@(& git -C $wt rev-parse HEAD 2>$null) + @(& git -C $wt status --porcelain -- . ':!.claude' 2>$null) + @(& git -C $wt diff -- . ':!.claude' 2>$null)) -join "`n"
   $sha = [Security.Cryptography.SHA1]::Create()
   [BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($t)))
 }
@@ -136,6 +143,8 @@ switch ($Hook) {
       Select-String -LiteralPath $dec -Pattern '^- ' -Encoding UTF8 | Select-Object -First 20 | ForEach-Object { $_.Line }
       Write-Output "Mention these in one short line at the start of your first reply. When the user settles one, delete its line from .claude/DECISIONS.md."
     }
+    if ($inWorktree) { Write-Output "[plan-keeper] Plan file: $plan (main checkout, shared by all worktrees). Never edit a .claude/PLAN.md inside the worktree." }
+    if ($agy) { Write-Output "[plan-keeper] agy rewrites the plan after each turn that changes files or commits: don't edit it yourself unless the user asks; say new requests and outcomes plainly in your final reply." }
     Write-Output "[plan-keeper] Put each question for the user on its own line starting 'DECIDE: '. Write it self-contained for a future session: name the feature/file, what prompted it, and the options."
   }
 
@@ -146,7 +155,7 @@ switch ($Hook) {
       if ($p.Length -gt 2000) { $p = $p.Substring($p.Length - 2000) }
       [IO.File]::WriteAllText($lastPrompt, $p, $utf8)                   # context for stop-agy
     } else {
-      Write-Output "[plan-keeper] Multi-step task: add/merge it into .claude/PLAN.md first (skip quick ones)."
+      Write-Output "[plan-keeper] Multi-step task: add/merge it into $plan first (skip quick ones)."
     }
     if (In-Git) { New-Item -ItemType Directory -Force -Path $dir | Out-Null; [IO.File]::WriteAllText($tstate, (Get-Fingerprint), $utf8) }
     if ((Test-Path -LiteralPath $lastAsk) -and (Get-Item -LiteralPath $lastAsk).Length -gt 0) {
@@ -215,7 +224,7 @@ switch ($Hook) {
     if (-not $reply.Trim()) { $reply = '(empty)' }
     $ask = if (Test-Path -LiteralPath $lastPrompt) { [IO.File]::ReadAllText($lastPrompt) } else { '' }
     if (-not $ask) { $ask = '(unknown)' }
-    $changed = (@(& git -C $root status --short 2>$null | Where-Object { $_ -notmatch ' \.claude/' } | Select-Object -First 30) -join "`n")
+    $changed = (@(& git -C $wt status --short 2>$null | Where-Object { $_ -notmatch ' \.claude/' } | Select-Object -First 30) -join "`n")
     if (-not $changed) { $changed = '(not a git repo or none)' }
     $prompt = @"
 You maintain .claude/PLAN.md, the short progress file an AI coding assistant reads at the start of every session. Everything you need is below: do not read, search or run anything, and do not use any tools. Output ONLY the complete new file, starting with the line '# Plan'. No other text, no code fences.
@@ -282,7 +291,7 @@ $changed
     # Without agy: once per working turn, Claude updates the plan itself (one extra turn).
     if ($agy -or $active -or -not (Test-Path -LiteralPath $plan)) { exit 0 }   # with agy, stop-agy handles it
     if (-not (Work-Done) -or (Plan-Touched)) { exit 0 }
-    Write-Output '{"decision":"block","reason":"plan-keeper: files changed this turn but .claude/PLAN.md was not updated. Update it now in ONE edit: delete finished items (add a one-line summary to Log, keep the last 5), set Now/Next to what remains, merge duplicates. Then stop without further work."}'
+    Write-Output ('{"decision":"block","reason":"plan-keeper: files changed this turn but ' + ($plan -replace '\\', '/') + ' was not updated. Update it now in ONE edit: delete finished items (add a one-line summary to Log, keep the last 5), set Now/Next to what remains, merge duplicates. Then stop without further work."}')
   }
 }
 exit 0

@@ -22,9 +22,10 @@ MAX_LINES=150
 INPUT=""
 if [ ! -t 0 ]; then INPUT="$(cat)"; fi
 
-in_git() { git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; }
+in_git() { git -C "$WT" rev-parse --is-inside-work-tree >/dev/null 2>&1; }
 # Checksum of uncommitted changes outside .claude/. One git call per prompt and per stop, none per edit.
-fingerprint() { { git -C "$ROOT" status --porcelain -- . ':!.claude'; git -C "$ROOT" diff -- . ':!.claude'; } 2>/dev/null | cksum; }
+# HEAD is included, so a turn that only commits (clean tree before and after) still counts as work.
+fingerprint() { { git -C "$WT" rev-parse HEAD; git -C "$WT" status --porcelain -- . ':!.claude'; git -C "$WT" diff -- . ':!.claude'; } 2>/dev/null | cksum; }
 # Files changed since the prompt (git repos only), or an earlier agy run still owes an update.
 work_done() { [ -f "$PENDING" ] || { [ -f "$TSTATE" ] && in_git && [ "$(fingerprint)" != "$(cat "$TSTATE")" ]; }; }
 # Claude edited PLAN.md itself during this turn.
@@ -39,7 +40,7 @@ history_add() {
 # Commit subjects since the prompt, joined with "; " (the timeline when agy does not run).
 commits_this_turn() {
   { [ -f "$TSTATE" ] && in_git; } || return 0
-  git -C "$ROOT" log --since="@$(date -r "$TSTATE" +%s)" --format=%s 2>/dev/null | head -n 5 \
+  git -C "$WT" log --since="@$(date -r "$TSTATE" +%s)" --format=%s 2>/dev/null | head -n 5 \
     | awk 'NR > 1 { printf "; " } { printf "%s", $0 }'
 }
 
@@ -83,6 +84,12 @@ extract_asks() {
       }'
 }
 
+# Git work is checked in the session's own folder (the hook's "cwd"), which may be a worktree of $ROOT.
+# The plan files stay in $ROOT/.claude, shared by every worktree.
+WT="$(json_str cwd)"; WT="${WT//\\//}"
+WT="$(git -C "${WT:-$ROOT}" rev-parse --show-toplevel 2>/dev/null)"
+[ -n "$WT" ] || WT="$ROOT"
+
 case "$HOOK" in
   session-start)
     SRC="$(printf '%s' "$INPUT" | grep -oE '"source"[[:space:]]*:[[:space:]]*"[a-z]+"' | grep -oE '[a-z]+"$' | tr -d '"')"
@@ -116,6 +123,8 @@ case "$HOOK" in
       grep '^- ' "$DEC" | head -n 20
       echo "Mention these in one short line at the start of your first reply. When the user settles one, delete its line from .claude/DECISIONS.md."
     fi
+    [ "$WT" != "$ROOT" ] && echo "[plan-keeper] Plan file: $PLAN (main checkout, shared by all worktrees). Never edit a .claude/PLAN.md inside the worktree."
+    [ -n "$AGY" ] && echo "[plan-keeper] agy rewrites the plan after each turn that changes files or commits: don't edit it yourself unless the user asks; say new requests and outcomes plainly in your final reply."
     echo "[plan-keeper] Put each question for the user on its own line starting 'DECIDE: '. Write it self-contained for a future session: name the feature/file, what prompted it, and the options."
     ;;
 
@@ -123,7 +132,7 @@ case "$HOOK" in
     if [ -n "$AGY" ]; then
       mkdir -p "$DIR"; json_str prompt | tail -c 2000 > "$LASTPROMPT"   # context for stop-agy
     else
-      echo "[plan-keeper] Multi-step task: add/merge it into .claude/PLAN.md first (skip quick ones)."
+      echo "[plan-keeper] Multi-step task: add/merge it into $PLAN first (skip quick ones)."
     fi
     in_git && { mkdir -p "$DIR"; fingerprint > "$TSTATE"; }
     # Only when the previous reply asked something (~40 tokens, otherwise 0).
@@ -190,7 +199,7 @@ $MSG"
     SUM0="$(cksum < "$PLAN" 2>/dev/null)"
     REPLY="$(json_str last_assistant_message | awk '/^[[:space:]]*```/ { c = !c; next } !c' | tail -c 4000)"
     ASK="$(cat "$LASTPROMPT" 2>/dev/null)"
-    CHANGED="$(git -C "$ROOT" status --short 2>/dev/null | grep -v ' \.claude/' | head -n 30)"
+    CHANGED="$(git -C "$WT" status --short 2>/dev/null | grep -v ' \.claude/' | head -n 30)"
     PROMPT="You maintain .claude/PLAN.md, the short progress file an AI coding assistant reads at the start of every session. Everything you need is below: do not read, search or run anything, and do not use any tools. Output ONLY the complete new file, starting with the line '# Plan'. No other text, no code fences.
 
 Rules:
@@ -249,7 +258,7 @@ ${CHANGED:-(not a git repo or none)}"
     [ -f "$PLAN" ] || exit 0
     work_done || exit 0
     plan_touched && exit 0
-    printf '%s\n' '{"decision":"block","reason":"plan-keeper: files changed this turn but .claude/PLAN.md was not updated. Update it now in ONE edit: delete finished items (add a one-line summary to Log, keep the last 5), set Now/Next to what remains, merge duplicates. Then stop without further work."}'
+    printf '%s\n' '{"decision":"block","reason":"plan-keeper: files changed this turn but '"$PLAN"' was not updated. Update it now in ONE edit: delete finished items (add a one-line summary to Log, keep the last 5), set Now/Next to what remains, merge duplicates. Then stop without further work."}'
     ;;
 esac
 exit 0
